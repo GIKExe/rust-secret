@@ -1,7 +1,12 @@
-use std::{fs, io::Write, panic};
+use std::{
+	fs,
+	io::{BufWriter, Write},
+	panic,
+};
 
 use clap::{ArgAction, Parser};
-use image::{ImageBuffer, Rgb, codecs::jpeg::JpegEncoder};
+use jpeg_decoder::{ColorTransform, Decoder};
+use jpeg_encoder::{ColorType, Encoder};
 
 #[derive(Parser)]
 #[command(
@@ -27,9 +32,6 @@ struct Args {
 	read: bool,
 }
 
-// Тип для представления пикселя
-type Pixel = (u8, u8, u8);
-
 fn get_z(num: usize) -> String {
 	if num >= 1_048_576 {
 		format!("{:.3} МБ", (num as f64) / 1_048_576.0)
@@ -40,41 +42,36 @@ fn get_z(num: usize) -> String {
 	}
 }
 
-fn write_bits_to_pixels(pixels: &mut [Pixel], data: &[u8]) {
+fn write_bits_to_pixels(pixels: &mut [u8], data: &[u8]) {
 	let mut data = data.iter();
 	let mut sh = 0u8;
 	let mut byte = *data.next().unwrap_or(&0);
-
-	for (r, g, b) in pixels.iter_mut() {
-		*r = (*r & 0xFE) | ((byte >> sh) & 1); sh += 1;
-		if sh > 7 {byte = *data.next().unwrap_or(&0); sh = 0}
-
-		*g = (*g & 0xFE) | ((byte >> sh) & 1); sh += 1;
-		if sh > 7 {byte = *data.next().unwrap_or(&0); sh = 0}
-
-		*b = (*b & 0xFE) | ((byte >> sh) & 1); sh += 1;
-		if sh > 7 {byte = *data.next().unwrap_or(&0); sh = 0}
+	for chunk in pixels.chunks_exact_mut(3) {
+		// chunk = [Y, Cb, Cr]
+		chunk[0] = (chunk[0] & 252) | ((byte >> sh) & 3);
+		sh += 2;
+		if sh > 7 {
+			byte = *data.next().unwrap_or(&0);
+			sh = 0
+		};
 	}
 }
 
-fn read_bits_from_pixels(pixels: &Vec<Pixel>) -> Vec<u8> {
+fn read_bits_from_pixels(pixels: &[u8]) -> Vec<u8> {
 	let mut data = Vec::new();
 	let mut sh = 0u8;
 	let mut byte = 0;
-	for &(r, g, b) in pixels {
-		byte |= (r & 1) << sh;
-		sh += 1;
-		if sh > 7 {data.push(byte); byte = 0; sh = 0}
-
-		byte |= (g & 1) << sh;
-		sh += 1;
-		if sh > 7 {data.push(byte); byte = 0; sh = 0}
-
-		byte |= (b & 1) << sh;
-		sh += 1;
-		if sh > 7 {data.push(byte); byte = 0; sh = 0}
+	for chunk in pixels.chunks_exact(3) {
+		// chunk = [Y, Cb, Cr]
+		byte |= (chunk[0] & 3) << sh;
+		sh += 2;
+		if sh > 7 {
+			data.push(byte);
+			byte = 0;
+			sh = 0
+		}
 	}
-	if byte != 0 {data.push(byte)};
+	data.push(byte);
 	data
 }
 
@@ -83,12 +80,11 @@ fn process() {
 
 	let path = args.input.unwrap_or("input.jpg".to_string());
 	println!("Чтение {}", &path);
-	let img = image::open(&path)
-		.unwrap_or_else(|_| panic!("Не удалось открыть {}", &path));
-	let rgb_img = img.to_rgb8();
-
-	// Преобразование в вектор кортежей (R, G, B)
-	let mut pixels: Vec<Pixel> = rgb_img.pixels().map(|p| (p[0], p[1], p[2])).collect();
+	let file = fs::File::open(&path).unwrap_or_else(|_| panic!("Не удалось открыть {}", &path));
+	let mut decoder = Decoder::new(file);
+	decoder.set_color_transform(ColorTransform::YCbCr);
+	let mut pixels = decoder.decode().expect("Не удалось декодировать");
+	let metadata = decoder.info().expect("Не удалось получить метаданные");
 
 	if args.read {
 		// Чтение файла из фото
@@ -98,13 +94,13 @@ fn process() {
 		let path = args.output.unwrap_or("output.jpg".to_owned());
 		let mut output_file = fs::File::create(&path)
 			.unwrap_or_else(|_| panic!("Не удалось создать/перезаписать файл: {}", &path));
-		output_file.write_all(&data)
+		output_file
+			.write_all(&data)
 			.expect("Не удалось записать данные в файл");
-
 	} else {
 		// Запись файла в фото
 		println!("Всего пикселей: {}", pixels.len());
-		let max_bytes = pixels.len() * 3 / 8;
+		let max_bytes = pixels.len() * 2 / 8;
 		println!("Доступно для записи: {}\n", get_z(max_bytes));
 
 		let path = args.data.unwrap_or("input.7z".to_owned());
@@ -120,23 +116,32 @@ fn process() {
 		write_bits_to_pixels(&mut pixels, &data);
 
 		println!("Обратное преобразование");
-		let (width, height) = rgb_img.dimensions();
-		let mut output_img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(width, height);
-
-		for (x, y, pixel) in output_img.enumerate_pixels_mut() {
-			let index = (y * width + x) as usize;
-			let (r, g, b) = pixels[index];
-			*pixel = Rgb([r, g, b]);
-		}
-
-		// Сохранение в JPEG
 		let path = args.output.unwrap_or("output.jpg".to_owned());
-		let mut output_file = fs::File::create(&path)
-			.unwrap_or_else(|_| panic!("Не удалось записать файл: {}", &path));
-		let mut encoder = JpegEncoder::new_with_quality(&mut output_file, 100);
+		let file =
+			fs::File::create(&path).unwrap_or_else(|_| panic!("Не удалось записать файл: {}", &path));
+		let writer = BufWriter::new(file);
+		let encoder = Encoder::new(writer, 100);
 		encoder
-			.encode_image(&output_img)
-			.expect("Не удалось закодировать изображение");
+			.encode(&pixels, metadata.width, metadata.height, ColorType::Ycbcr)
+			.expect("Ошибка кодирования");
+
+		// let (width, height) = rgb_img.dimensions();
+		// let mut output_img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(width, height);
+
+		// for (x, y, pixel) in output_img.enumerate_pixels_mut() {
+		// 	let index = (y * width + x) as usize;
+		// 	let (r, g, b) = pixels[index];
+		// 	*pixel = Rgb([r, g, b]);
+		// }
+
+		// // Сохранение в JPEG
+		// let path = args.output.unwrap_or("output.jpg".to_owned());
+		// let mut output_file = fs::File::create(&path)
+		// 	.unwrap_or_else(|_| panic!("Не удалось записать файл: {}", &path));
+		// let mut encoder = JpegEncoder::new_with_quality(&mut output_file, 100);
+		// encoder
+		// 	.encode_image(&output_img)
+		// 	.expect("Не удалось закодировать изображение");
 	}
 }
 

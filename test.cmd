@@ -1,3 +1,3 @@
 @echo off
-secret -i input.jpg -d input.7z -o output.jpg
-secret -r -i output.jpg -o output.7z
+secret -i input.png -d input.7z -o output.png
+secret -r -i output.png -o output.7z
