@@ -10,20 +10,15 @@ use image::{ImageReader, Rgb};
 	long_about = None
 )]
 struct Args {
-	/// Input Brainfuck file
-	#[arg(short = 'i', long = "input")]
-	input: Option<String>,
+	/// Путь входного файла
+	input: String,
 
-	/// Output file path
-	#[arg(short = 'o', long = "output")]
-	output: Option<String>,
+	/// Путь выходного файла
+	output: String,
 
+	/// Путь вшиваемого файла, активирует запись
 	#[arg(short = 'd', long = "data")]
 	data: Option<String>,
-
-	/// Emit LLVM IR instead of binary
-	#[arg(short = 'r', long = "read", action = ArgAction::SetTrue)]
-	read: bool,
 }
 
 fn get_z(num: usize) -> String {
@@ -72,16 +67,10 @@ fn read_bits_from_pixels(pixels: &Vec<Pixel>) -> Vec<u8> {
 	data
 }
 
-mod default {
-	pub const INPUT: &str = "input.png";
-	pub const OUTPUT: &str = "output.png";
-	pub const DATA: &str = "input.zip";
-}
-
 fn process() {
 	let args = Args::parse();
 
-	let path = args.input.unwrap_or(default::INPUT.to_string());
+	let path = args.input.clone();
 	println!("Чтение {}", &path);
 	let mut image = ImageReader::open(&path)
 		.unwrap_or_else(|_| panic!("Не удалось открыть {}", &path))
@@ -92,27 +81,25 @@ fn process() {
 	let mut pixels: Vec<(u8, u8, u8)> = image.pixels()
 		.map(|p| (p[0], p[1], p[2])).collect();
 
-	if args.read {
-		// Чтение файла из фото
+	if args.data.is_none() {
 		println!("Читаем файл из фото...");
 		let mut data = read_bits_from_pixels(&pixels);
 		if let Some(index) = data.iter().rposition(|&b| b != 0x00) {
 			data.truncate(index + 1); // Сохраняем последний ненулевой элемент
 		}
 
-		let path = args.output.unwrap_or(default::OUTPUT.to_string());
+		let path = args.output.clone();
 		fs::File::create(&path)
 			.unwrap_or_else(|_| panic!("Не удалось создать/перезаписать файл: {}", &path))
 			.write_all(&data)
 			.expect("Не удалось записать данные в файл");
 
 	} else {
-		// Запись файла в фото
 		println!("Всего пикселей: {}", pixels.len());
 		let max_bytes = pixels.len() * 6 / 8;
 		println!("Доступно для записи: {}\n", get_z(max_bytes));
 
-		let path = args.data.unwrap_or(default::DATA.to_string());
+		let path = args.data.unwrap();
 		println!("Чтение {}", &path);
 		let data = fs::read(&path).unwrap_or_else(|_| panic!("Не удалось открыть {}", &path));
 		println!("Размер файла: {}", get_z(data.len()));
@@ -132,7 +119,7 @@ fn process() {
 			*pixel = Rgb([r, g, b]);
 		}
 
-		let path = args.output.unwrap_or(default::OUTPUT.to_string());
+		let path = args.output.clone();
 		image.save(&path).unwrap_or_else(|_| panic!("Не удалось сохранить изображение: {}", &path));
 	}
 }

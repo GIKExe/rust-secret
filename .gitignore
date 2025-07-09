@@ -1,3 +1,7 @@
 /target
 input.*
 output.*
+/secret
+/secret.exe
+/secret.exe.symlink
+
