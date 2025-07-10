@@ -7,7 +7,7 @@ mod png;
 #[command(
 	name = "secret",
 	version = "1.0",
-	about = "hides files in jpeg",
+	about = "Прячет данные в PNG RGB (24 бит)",
 	long_about = None
 )]
 struct Args {
