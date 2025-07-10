@@ -1,7 +1,8 @@
 /target
-input.*
-output.*
-/secret
-/secret.exe
-/secret.exe.symlink
-/data.txt
+data.txt
+input.png
+output.png
+output.exe
+secret-upx.exe
+secret.exe
+upx.exe

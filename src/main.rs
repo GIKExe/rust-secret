@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::{fs, io::Write, panic};
+use std::{fs, io::{Cursor, Read, Write}, panic};
 
 mod png;
 
@@ -7,7 +7,7 @@ mod png;
 #[command(
 	name = "secret",
 	version = "1.0",
-	about = "hides files in jpeg",
+	about = "Прячет данные в PNG RGB (24 бит)",
 	long_about = None
 )]
 struct Args {
@@ -72,25 +72,31 @@ fn process() {
 
 	if args.data.is_none() {
 		println!("Читаем файл из фото...");
-		let mut data = read_bits_from_bytes(&bytes);
-		if let Some(index) = data.iter().rposition(|&b| b != 0x00) {
-			data.truncate(index + 1); // Сохраняем последний ненулевой элемент
-		}
+		let mut buf = Cursor::new(read_bits_from_bytes(&bytes));
+		let mut size = [0u8, 0, 0, 0];
+		buf.read_exact(&mut size).expect("Ошибка декодирования файла");
+		let size = u32::from_le_bytes(size) as usize;
+		let mut data = vec![0u8; size];
+		buf.read_exact(&mut data).expect("Ошибка декодирования файла");
 
 		let path = args.output.clone();
 		fs::File::create(&path)
 			.unwrap_or_else(|_| panic!("Не удалось создать/перезаписать файл: {}", &path))
 			.write_all(&data)
 			.expect("Не удалось записать данные в файл");
+
 	} else {
+
 		println!("Всего пикселей: {}", bytes.len());
-		let max_bytes = bytes.len() * 6 / 8;
+		let max_bytes = bytes.len() * 2 / 8;
 		println!("Доступно для записи: {}\n", get_z(max_bytes));
 
 		let path = args.data.unwrap();
 		println!("Чтение {}", &path);
-		let data = fs::read(&path).unwrap_or_else(|_| panic!("Не удалось открыть {}", &path));
-		println!("Размер файла: {}", get_z(data.len()));
+		let mut filedata = fs::read(&path).unwrap_or_else(|_| panic!("Не удалось открыть {}", &path));
+		let mut data = (filedata.len() as u32).to_le_bytes().to_vec();
+		println!("Размер файла: {}", get_z(filedata.len()));
+		data.append(&mut filedata);
 
 		if data.len() > max_bytes {
 			return println!("Файл превышает доступное место");
