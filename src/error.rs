@@ -14,7 +14,7 @@ pub enum Error {
 impl fmt::Display for Error {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
-			Self::FileRead(e) => write!(f, "{}", format!("Не удалось прочистать файл: {e}").red()),
+			Self::FileRead(e) => write!(f, "{}", format!("Не удалось прочитать файл: {e}").red()),
 			Self::FileWrite(e) => write!(f, "{}", format!("Не удалось записать файл: {e}").red()),
 			Self::Decoder(e) => write!(f, "{}", format!("Ошибка декодера: {e}").red()),
 			Self::Encoder(e) => write!(f, "{}", format!("Ошибка кодировщика: {e}").red()),
