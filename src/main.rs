@@ -1,7 +1,9 @@
 use clap::Parser;
-use std::{fs, io::{Cursor, Read, Write}, panic};
+use std::{fs, io::{Cursor, Read}};
 
-mod png;
+mod error;
+use error::Error;
+mod io;
 
 #[derive(Parser)]
 #[command(
@@ -63,58 +65,49 @@ fn read_bits_from_bytes(bytes: &Vec<u8>) -> Vec<u8> {
 	data
 }
 
-fn process() {
+fn process() -> Result<(), Error>{
 	let args = Args::parse();
 
 	let path = args.input.clone();
 	println!("Чтение {}", &path);
-	let (mut bytes, info) = png::read_image(&path);
+	let (mut bytes, info) = io::read_image(&path)?;
 
-	if args.data.is_none() {
-		println!("Читаем файл из фото...");
-		let mut buf = Cursor::new(read_bits_from_bytes(&bytes));
-		let mut size = [0u8, 0, 0, 0];
-		buf.read_exact(&mut size).expect("Ошибка декодирования файла");
-		let size = u32::from_le_bytes(size) as usize;
-		let mut data = vec![0u8; size];
-		buf.read_exact(&mut data).expect("Ошибка декодирования файла");
-
-		let path = args.output.clone();
-		fs::File::create(&path)
-			.unwrap_or_else(|_| panic!("Не удалось создать/перезаписать файл: {}", &path))
-			.write_all(&data)
-			.expect("Не удалось записать данные в файл");
-
-	} else {
-
+	if let Some(path) = args.data {
 		println!("Всего пикселей: {}", bytes.len());
 		let max_bytes = bytes.len() * 2 / 8;
 		println!("Доступно для записи: {}\n", get_z(max_bytes));
 
-		let path = args.data.unwrap();
+		// let path = args.data.unwrap();
 		println!("Чтение {}", &path);
-		let mut filedata = fs::read(&path).unwrap_or_else(|_| panic!("Не удалось открыть {}", &path));
+		let mut filedata = fs::read(&path).map_err(|_| Error::FileRead(path.clone()))?;
 		let mut data = (filedata.len() as u32).to_le_bytes().to_vec();
 		println!("Размер файла: {}", get_z(filedata.len()));
 		data.append(&mut filedata);
 
-		if data.len() > max_bytes {
-			return println!("Файл превышает доступное место");
-		}
-
 		println!("Вшиваем файл в фото...");
+		if data.len() > max_bytes {return Err(Error::NoFreeSpace)};
 		write_bits_to_bytes(&mut bytes, &data);
 
 		println!("Сохранение файла...");
 		let path = args.output.clone();
-		png::write_image(path, &bytes, info);
-	}
+		io::write_image(path, &bytes, info)?;
+
+	} else {
+
+		println!("Читаем файл из фото...");
+		let mut buf = Cursor::new(read_bits_from_bytes(&bytes));
+		let mut size = [0u8, 0, 0, 0];
+		buf.read_exact(&mut size).map_err(|_| Error::BufEndedUnexpectedly)?;
+		let size = u32::from_le_bytes(size) as usize;
+		let mut data = vec![0u8; size];
+		buf.read_exact(&mut data).map_err(|_| Error::BufEndedUnexpectedly)?;
+
+		let path = args.output.clone();
+		fs::write(&path, data).map_err(|_| Error::FileWrite(path.clone()))?;
+	};
+	Ok(())
 }
 
 fn main() {
-	let result = panic::catch_unwind(process);
-	match result {
-		Ok(_) => println!("Программа завершилась без ошибок\n\n "),
-		Err(e) => println!("{e:?}"),
-	}
+	match process() {Ok(_) => {}, Err(e) => println!("{e}")};
 }
